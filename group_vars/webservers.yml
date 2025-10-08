@@ -1,0 +1,14 @@
+---
+# Docker configuration
+docker_install_compose: true
+docker_compose_version: "2.20.0"
+docker_users:
+  - "{{ ansible_user }}"
+
+# Use system packages instead of pip
+docker_system_packages:
+  - docker.io
+  - docker-compose
+
+# Disable pip installation for docker packages
+pip_install_packages: []

@@ -1,0 +1,57 @@
+---
+- name: Install pip and Docker on servers
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Update package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required system packages
+      apt:
+        name:
+          - python3-full
+          - python3-pip
+          - python3-venv
+          - docker.io
+          - docker-compose-plugin
+          - python3-docker
+        state: present
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Create legacy docker-compose compatibility script
+      copy:
+        content: |
+          #!/bin/bash
+          docker compose "$@"
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+
+    - name: Test Docker installation
+      command: docker --version
+      register: docker_test
+      changed_when: false
+
+    - name: Test Docker Compose installation
+      command: docker compose version
+      register: compose_test
+      changed_when: false
+
+    - name: Show installation results
+      debug:
+        msg:
+          - "Docker: {{ docker_test.stdout }}"
+          - "Docker Compose: {{ compose_test.stdout }}"
