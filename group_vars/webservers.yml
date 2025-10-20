@@ -8,7 +8,7 @@ docker_users:
 # Use system packages instead of pip
 docker_system_packages:
   - docker.io
-  - docker-compose
+  - docker compose
 
 # Disable pip installation for docker packages
 pip_install_packages: []

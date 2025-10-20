@@ -15,4 +15,14 @@
 
 1. Клонируйте репозиторий:
 ```bash
-git clone 
+git clone
+```
+
+2. Деплой приложения на удалённый сервер:
+```bash
+make deploy
+```
+
+Пример приложения:
+
+<a href="https://exampledev.ru/">Перейти на сайт Exampledev</a>

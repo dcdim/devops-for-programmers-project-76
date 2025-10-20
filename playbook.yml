@@ -1,6 +1,6 @@
 ---
-- name: Install pip and Docker on servers
-  hosts: all
+- name: Install Docker and docker-compose
+  hosts: webservers
   become: yes
 
   tasks:
@@ -9,18 +9,14 @@
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: Install required system packages
+    - name: Install Docker and dependencies
       apt:
         name:
-          - python3-full
-          - python3-pip
-          - python3-venv
           - docker.io
           - docker-compose-plugin
-          - python3-docker
         state: present
 
-    - name: Start and enable Docker service
+    - name: Start and enable Docker
       systemd:
         name: docker
         state: started
@@ -32,26 +28,105 @@
         groups: docker
         append: yes
 
-    - name: Create legacy docker-compose compatibility script
+- name: Deploy Redmine on multiple servers
+  hosts: redmine_servers
+  become: yes
+  vars:
+    container_redmine_port: "{{ redmine_port | default(80) }}"
+
+  tasks:
+    - name: Create redmine directory
+      file:
+        path: "/opt/redmine-{{ inventory_hostname }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Create .env file
       copy:
         content: |
-          #!/bin/bash
-          docker compose "$@"
-        dest: /usr/local/bin/docker-compose
-        mode: '0755'
+          POSTGRES_PASSWORD=secret_password_123
+          POSTGRES_USER=redmine
+          POSTGRES_DB=redmine
+          REDMINE_DB_POSTGRES=postgres
+          REDMINE_DB_USERNAME=redmine
+          REDMINE_DB_PASSWORD=secret_password_123
+          REDMINE_DB_DATABASE=redmine
+          REDMINE_SECRET_KEY_BASE={{ 64 | random | to_uuid }}
+          REDMINE_PORT=3000
+        dest: "/opt/redmine-{{ inventory_hostname }}/.env"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
 
-    - name: Test Docker installation
-      command: docker --version
-      register: docker_test
-      changed_when: false
+    - name: Create docker-compose.yml
+      copy:
+        content: |
+          version: '3.8'
+          
+          services:
+            postgres:
+              image: postgres:13
+              container_name: "postgres-redmine-{{ inventory_hostname }}"
+              env_file: .env
+              volumes:
+                - postgres_data:/var/lib/postgresql/data
+              restart: always
+              networks:
+                - redmine-network
 
-    - name: Test Docker Compose installation
-      command: docker compose version
-      register: compose_test
-      changed_when: false
+            redmine:
+              image: redmine:latest
+              container_name: "redmine-app-{{ inventory_hostname }}"
+              ports:
+                - "{{ container_redmine_port }}:3000"
+              env_file: .env
+              volumes:
+                - redmine_data:/usr/src/redmine/files
+                - redmine_plugins:/usr/src/redmine/plugins
+              depends_on:
+                - postgres
+              restart: always
+              networks:
+                - redmine-network
 
-    - name: Show installation results
+          volumes:
+            postgres_data:
+            redmine_data:
+            redmine_plugins:
+
+          networks:
+            redmine-network:
+              driver: bridge
+        dest: "/opt/redmine-{{ inventory_hostname }}/docker-compose.yml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Stop and remove existing containers
+      shell: |
+        cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose down
+      ignore_errors: yes
+
+    - name: Deploy with docker compose
+      shell: |
+        cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose up -d
+      args:
+        executable: /bin/bash
+
+    - name: Show container status
+      shell: |
+        cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose ps
+      register: compose_status
+
+    - name: Display compose status
       debug:
-        msg:
-          - "Docker: {{ docker_test.stdout }}"
-          - "Docker Compose: {{ compose_test.stdout }}"
+        var: compose_status.stdout
+
+    - name: Show access information
+      debug:
+        msg: |
+          Redmine deployed on {{ inventory_hostname }}
+          Access URL: http://{{ ansible_host }}:{{ container_redmine_port }}
+          Container names:
+            - postgres-redmine-{{ inventory_hostname }}
+            - redmine-app-{{ inventory_hostname }}

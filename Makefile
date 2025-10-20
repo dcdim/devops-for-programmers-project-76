@@ -9,3 +9,6 @@ servers:
 	ansible-playbook -i inventory.ini playbook.yml
 
 all: setup servers
+
+deploy:
+	ansible-playbook -i inventory.ini playbook.yml -u user --become
