@@ -1,0 +1,19 @@
+db_password: "{{ vault_postgres_password }}"
+db_user: "{{ vault_postgres_user }}"
+db_name: "{{ vault_postgres_db }}"
+db_host: "{{ vault_db_host }}"
+db_port: "{{ vault_db_port }}"
+
+# Docker configuration
+docker_install_compose: true
+docker_compose_version: "2.20.0"
+docker_users:
+  - "{{ ansible_user }}"
+
+# Use system packages instead of pip
+docker_system_packages:
+  - docker.io
+  - docker-compose-plugin
+
+# Disable pip installation for docker packages
+pip_install_packages: []
