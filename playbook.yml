@@ -1,8 +1,88 @@
 ---
+- name: Create swap file for installation
+  hosts: webservers
+  become: yes
+  tasks:
+    - name: Check current swap
+      shell: free -h
+      register: current_swap
+
+    - name: Show current memory
+      debug:
+        var: current_swap.stdout
+
+    - name: Create 2GB swap file
+      shell: |
+        # Check if swap already exists
+        if [ -f /swapfile ]; then
+          echo "Swap file already exists"
+          sudo swapon --show
+        else
+          # Create swap file
+          sudo fallocate -l 2G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+          echo "Swap file created and activated"
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: Verify swap is active
+      shell: free -h
+      register: new_swap
+
+    - name: Show new memory status
+      debug:
+        var: new_swap.stdout
+
+- name: Fix dpkg and prepare system
+  hosts: webservers
+  become: yes
+  tasks:
+    - name: Fix interrupted dpkg processes
+      shell: |
+        sudo dpkg --configure -a
+        sudo apt-get install -f -y
+      args:
+        executable: /bin/bash
+      ignore_errors: yes
+
+    - name: Clean up apt cache
+      apt:
+        autoclean: yes
+        autoremove: yes
+
+    - name: Update package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+- name: Install and configure Datadog Agent
+  hosts: webservers
+  become: yes
+  vars:
+    datadog_api_key: "{{ vault_datadog_api_key }}"
+    datadog_site: "{{ vault_datadog_site | default('datadoghq.eu') }}"
+    datadog_http_check_url: "http://{{ ansible_host }}:{{ redmine_port | default(80) }}/"
+  roles:
+    - role: datadog.datadog
+
+- name: Clean up swap after installation (optional)
+  hosts: webservers
+  become: yes
+  tasks:
+    - name: Remove swap file
+      shell: |
+        sudo swapoff /swapfile || true
+        sudo rm -f /swapfile || true
+        sudo sed -i '/\\/swapfile/d' /etc/fstab || true
+      when: cleanup_swap | default(false)
+
 - name: Install Docker and docker-compose
   hosts: all
   become: yes
-
   tasks:
     - name: Update package cache
       apt:
@@ -33,6 +113,11 @@
   become: yes
   vars:
     container_redmine_port: "{{ redmine_port | default(80) }}"
+    db_host: "{{ vault_db_host }}"
+    db_port: "{{ vault_db_port }}"
+    db_user: "{{ vault_postgres_user }}"
+    db_password: "{{ vault_postgres_password }}"
+    db_name: "{{ vault_postgres_db }}"
 
   tasks:
     - name: Debug what's using the port
@@ -47,7 +132,6 @@
 
     - name: Stop any Docker containers using the port
       shell: |
-        # Используем простой формат без шаблонов
         docker ps --format "{{.Names}} {{.Ports}}" | grep ":{{ container_redmine_port }}->" | awk '{print $1}' | xargs -r docker stop
       ignore_errors: yes
 
@@ -69,6 +153,19 @@
         state: directory
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
+
+    - name: Force cleanup all Docker resources
+      shell: |
+        # Принудительно останавливаем и удаляем все
+        docker stop redmine-app-{{ inventory_hostname }} 2>/dev/null || true
+        docker rm -f redmine-app-{{ inventory_hostname }} 2>/dev/null || true
+        cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose down --remove-orphans 2>/dev/null || true
+        docker network prune -f 2>/dev/null || true
+      ignore_errors: yes
+
+    - name: Wait for cleanup to complete
+      pause:
+        seconds: 5
 
     - name: Create .env file for external database
       copy:
@@ -99,7 +196,6 @@
                 - "{{ container_redmine_port }}:3000"
               env_file: .env
               environment:
-                # Явно указываем переменные для подключения к внешней БД
                 - REDMINE_DB_POSTGRES={{ db_host }}
                 - REDMINE_DB_PORT={{ db_port }}
                 - REDMINE_DB_USERNAME={{ db_user }}
@@ -126,6 +222,25 @@
     - name: Stop and remove existing containers
       shell: |
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose down 2>/dev/null || true
+
+        docker rm -f redmine-app-{{ inventory_hostname }} 2>/dev/null || true
+        docker network rm redmine-{{ inventory_hostname }}_default 2>/dev/null || true
+      ignore_errors: yes
+
+    - name: Wait for containers to be fully removed
+      pause:
+        seconds: 5
+
+    - name: Verify container is removed
+      shell: |
+        docker ps -a --filter "name=redmine-app-{{ inventory_hostname }}" --format "table {{"{{.Names}}"}}"
+      register: existing_container
+      failed_when: false
+
+    - name: Force remove if container still exists
+      shell: |
+        docker rm -f redmine-app-{{ inventory_hostname }} 2>/dev/null || true
+      when: existing_container.stdout != ""
       ignore_errors: yes
 
     - name: Wait for database to be ready

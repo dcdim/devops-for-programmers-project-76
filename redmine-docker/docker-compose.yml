@@ -14,7 +14,7 @@ services:
       context: .
     image: redmine:latest
     ports:
-      - "80:3000"
+      - "3030:3000"
     volumes:
       - ./storage/docker_redmine-plugins:/usr/src/redmine/plugins
       - ./storage/docker_redmine-themes:/usr/src/redmine/public/themes
