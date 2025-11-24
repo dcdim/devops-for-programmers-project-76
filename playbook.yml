@@ -87,8 +87,6 @@
     - role: geerlingguy.docker
       vars:
         docker_install_compose: true
-        docker_users:
-          - "{{ ansible_user }}"
         docker_edition: "ce"
         docker_install_plugins:
           - docker-buildx-plugin
