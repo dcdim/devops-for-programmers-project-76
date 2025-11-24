@@ -4,7 +4,7 @@
   become: true
   tasks:
     - name: Check current swap
-      ansible.builtin.shell: free -h
+      ansible.builtin.command: free -h
       register: current_swap
       changed_when: false
 
@@ -14,6 +14,7 @@
 
     - name: Create 2GB swap file
       ansible.builtin.shell: |
+        set -o pipefail
         # Check if swap already exists
         if [ -f /swapfile ]; then
           echo "Swap file already exists"
@@ -31,7 +32,7 @@
         executable: /bin/bash
 
     - name: Verify swap is active
-      ansible.builtin.shell: free -h
+      ansible.builtin.command: free -h
       register: new_swap
       changed_when: false
 
@@ -45,11 +46,12 @@
   tasks:
     - name: Fix interrupted dpkg processes
       ansible.builtin.shell: |
+        set -o pipefail
         sudo dpkg --configure -a
         sudo apt-get install -f -y
       args:
         executable: /bin/bash
-      ignore_errors: true
+      failed_when: false
 
     - name: Clean up apt cache
       ansible.builtin.apt:
@@ -79,7 +81,7 @@
       ansible.builtin.shell: |
         sudo swapoff /swapfile || true
         sudo rm -f /swapfile || true
-        sudo sed -i '/\\/swapfile/d' /etc/fstab || true
+        sudo sed -i '/\/swapfile/d' /etc/fstab || true
       when: cleanup_swap | default(false)
 
 - name: Install Docker using role
@@ -90,9 +92,6 @@
       vars:
         docker_install_compose: true
         docker_edition: "ce"
-        docker_install_plugins:
-          - docker-buildx-plugin
-          - docker-compose-plugin
 
 - name: Deploy Redmine with external database
   hosts: redmine_servers
@@ -108,6 +107,7 @@
   tasks:
     - name: Debug what's using the port
       ansible.builtin.shell: |
+        set -o pipefail
         sudo ss -tulpn | grep ":{{ container_redmine_port }} " || echo "Port {{ container_redmine_port }} is free"
       register: port_debug
       changed_when: false
@@ -118,13 +118,13 @@
 
     - name: Stop any Docker containers using the port
       ansible.builtin.shell: |
-        docker ps --format "{{.Names}} {{.Ports}}" | grep ":{{ container_redmine_port }}->" | awk '{print $1}' | xargs -r docker stop
-      ignore_errors: true
+        docker ps --format "table {{.Names}}\t{{.Ports}}" | grep ":{{ container_redmine_port }}->" | awk '{print $1}' | xargs -r docker stop
+      failed_when: false
 
     - name: Kill processes using port
       ansible.builtin.shell: |
         sudo fuser -k {{ container_redmine_port }}/tcp || true
-      ignore_errors: true
+      failed_when: false
 
     - name: Wait for port to be free
       ansible.builtin.wait_for:
@@ -148,7 +148,7 @@
         docker rm -f redmine-app-{{ inventory_hostname }} 2>/dev/null || true
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose down --remove-orphans 2>/dev/null || true
         docker network prune -f 2>/dev/null || true
-      ignore_errors: true
+      failed_when: false
 
     - name: Wait for cleanup to complete
       ansible.builtin.pause:
@@ -210,10 +210,9 @@
     - name: Stop and remove existing containers
       ansible.builtin.shell: |
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose down 2>/dev/null || true
-
         docker rm -f redmine-app-{{ inventory_hostname }} 2>/dev/null || true
         docker network rm redmine-{{ inventory_hostname }}_default 2>/dev/null || true
-      ignore_errors: true
+      failed_when: false
 
     - name: Wait for containers to be fully removed
       ansible.builtin.pause:
@@ -221,7 +220,7 @@
 
     - name: Verify container is removed
       ansible.builtin.shell: |
-        docker ps -a --filter "name=redmine-app-{{ inventory_hostname }}" --format "table {{ "{{.Names}}" }}"
+        docker ps -a --filter "name=redmine-app-{{ inventory_hostname }}" --format "table {{ '{{.Names}}' }}"
       register: existing_container
       changed_when: false
       failed_when: false
@@ -230,7 +229,7 @@
       ansible.builtin.shell: |
         docker rm -f redmine-app-{{ inventory_hostname }} 2>/dev/null || true
       when: existing_container.stdout != ""
-      ignore_errors: true
+      failed_when: false
 
     - name: Wait for database to be ready
       ansible.builtin.wait_for:
@@ -288,6 +287,7 @@
 
     - name: Check for database connection issues
       ansible.builtin.shell: |
+        set -o pipefail
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose logs redmine | grep -i "postgres\|database\|db\|error\|failed\|timeout" | tail -10
       register: db_logs
       changed_when: false
