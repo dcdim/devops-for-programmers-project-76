@@ -92,7 +92,7 @@
     - name: Install Docker and dependencies
       apt:
         name:
-          - docker.io
+          - docker-ce
           - docker-compose-plugin
         state: present
 
