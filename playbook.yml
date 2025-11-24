@@ -1,18 +1,19 @@
 ---
 - name: Create swap file for installation
   hosts: webservers
-  become: yes
+  become: true
   tasks:
     - name: Check current swap
-      shell: free -h
+      ansible.builtin.shell: free -h
       register: current_swap
+      changed_when: false
 
     - name: Show current memory
-      debug:
+      ansible.builtin.debug:
         var: current_swap.stdout
 
     - name: Create 2GB swap file
-      shell: |
+      ansible.builtin.shell: |
         # Check if swap already exists
         if [ -f /swapfile ]; then
           echo "Swap file already exists"
@@ -30,38 +31,39 @@
         executable: /bin/bash
 
     - name: Verify swap is active
-      shell: free -h
+      ansible.builtin.shell: free -h
       register: new_swap
+      changed_when: false
 
     - name: Show new memory status
-      debug:
+      ansible.builtin.debug:
         var: new_swap.stdout
 
 - name: Fix dpkg and prepare system
   hosts: webservers
-  become: yes
+  become: true
   tasks:
     - name: Fix interrupted dpkg processes
-      shell: |
+      ansible.builtin.shell: |
         sudo dpkg --configure -a
         sudo apt-get install -f -y
       args:
         executable: /bin/bash
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: Clean up apt cache
-      apt:
-        autoclean: yes
-        autoremove: yes
+      ansible.builtin.apt:
+        autoclean: true
+        autoremove: true
 
     - name: Update package cache
-      apt:
-        update_cache: yes
+      ansible.builtin.apt:
+        update_cache: true
         cache_valid_time: 3600
 
 - name: Install and configure Datadog Agent
   hosts: webservers
-  become: yes
+  become: true
   vars:
     datadog_api_key: "{{ vault_datadog_api_key }}"
     datadog_site: "{{ vault_datadog_site | default('datadoghq.eu') }}"
@@ -71,18 +73,18 @@
 
 - name: Clean up swap after installation (optional)
   hosts: webservers
-  become: yes
+  become: true
   tasks:
     - name: Remove swap file
-      shell: |
+      ansible.builtin.shell: |
         sudo swapoff /swapfile || true
         sudo rm -f /swapfile || true
         sudo sed -i '/\\/swapfile/d' /etc/fstab || true
       when: cleanup_swap | default(false)
 
-- name: Install Docker and docker-compose
+- name: Install Docker using role
   hosts: all
-  become: yes
+  become: true
   roles:
     - role: geerlingguy.docker
       vars:
@@ -94,7 +96,7 @@
 
 - name: Deploy Redmine with external database
   hosts: redmine_servers
-  become: yes
+  become: true
   vars:
     container_redmine_port: "{{ redmine_port | default(80) }}"
     db_host: "{{ vault_db_host }}"
@@ -105,54 +107,55 @@
 
   tasks:
     - name: Debug what's using the port
-      shell: |
+      ansible.builtin.shell: |
         sudo ss -tulpn | grep ":{{ container_redmine_port }} " || echo "Port {{ container_redmine_port }} is free"
       register: port_debug
       changed_when: false
 
     - name: Show port debug info
-      debug:
+      ansible.builtin.debug:
         var: port_debug.stdout
 
     - name: Stop any Docker containers using the port
-      shell: |
+      ansible.builtin.shell: |
         docker ps --format "{{.Names}} {{.Ports}}" | grep ":{{ container_redmine_port }}->" | awk '{print $1}' | xargs -r docker stop
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: Kill processes using port
-      shell: |
+      ansible.builtin.shell: |
         sudo fuser -k {{ container_redmine_port }}/tcp || true
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: Wait for port to be free
-      wait_for:
+      ansible.builtin.wait_for:
         host: "0.0.0.0"
         port: "{{ container_redmine_port }}"
         state: stopped
         timeout: 10
 
     - name: Create redmine directory
-      file:
+      ansible.builtin.file:
         path: "/opt/redmine-{{ inventory_hostname }}"
         state: directory
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
+        mode: '0755'
 
     - name: Force cleanup all Docker resources
-      shell: |
+      ansible.builtin.shell: |
         # Принудительно останавливаем и удаляем все
         docker stop redmine-app-{{ inventory_hostname }} 2>/dev/null || true
         docker rm -f redmine-app-{{ inventory_hostname }} 2>/dev/null || true
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose down --remove-orphans 2>/dev/null || true
         docker network prune -f 2>/dev/null || true
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: Wait for cleanup to complete
-      pause:
+      ansible.builtin.pause:
         seconds: 5
 
     - name: Create .env file for external database
-      copy:
+      ansible.builtin.copy:
         content: |
           # External PostgreSQL database connection
           REDMINE_DB_POSTGRES={{ db_host }}
@@ -170,7 +173,7 @@
         mode: '0640'
 
     - name: Create docker-compose.yml for external database
-      copy:
+      ansible.builtin.copy:
         content: |
           services:
             redmine:
@@ -202,107 +205,113 @@
         dest: "/opt/redmine-{{ inventory_hostname }}/docker-compose.yml"
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
+        mode: '0644'
 
     - name: Stop and remove existing containers
-      shell: |
+      ansible.builtin.shell: |
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose down 2>/dev/null || true
 
         docker rm -f redmine-app-{{ inventory_hostname }} 2>/dev/null || true
         docker network rm redmine-{{ inventory_hostname }}_default 2>/dev/null || true
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: Wait for containers to be fully removed
-      pause:
+      ansible.builtin.pause:
         seconds: 5
 
     - name: Verify container is removed
-      shell: |
-        docker ps -a --filter "name=redmine-app-{{ inventory_hostname }}" --format "table {{"{{.Names}}"}}"
+      ansible.builtin.shell: |
+        docker ps -a --filter "name=redmine-app-{{ inventory_hostname }}" --format "table {{ "{{.Names}}" }}"
       register: existing_container
+      changed_when: false
       failed_when: false
 
     - name: Force remove if container still exists
-      shell: |
+      ansible.builtin.shell: |
         docker rm -f redmine-app-{{ inventory_hostname }} 2>/dev/null || true
       when: existing_container.stdout != ""
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: Wait for database to be ready
-      wait_for:
+      ansible.builtin.wait_for:
         host: "{{ db_host }}"
         port: "{{ db_port }}"
         timeout: 30
         delay: 5
 
     - name: Deploy with docker compose
-      shell: |
+      ansible.builtin.shell: |
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose up -d
       args:
         executable: /bin/bash
 
     - name: Wait a moment for container to initialize
-      pause:
+      ansible.builtin.pause:
         seconds: 10
 
     - name: Check if container is running
-      shell: |
+      ansible.builtin.shell: |
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose ps --services --filter "status=running"
       register: running_services
+      changed_when: false
       until: "'redmine' in running_services.stdout"
       retries: 12
       delay: 10
 
     - name: Wait for Redmine to be accessible
-      wait_for:
+      ansible.builtin.wait_for:
         port: "{{ container_redmine_port }}"
         host: "{{ ansible_host }}"
         delay: 10
         timeout: 180
 
     - name: Check container status
-      shell: |
+      ansible.builtin.shell: |
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose ps
       register: compose_status
+      changed_when: false
 
     - name: Display compose status
-      debug:
+      ansible.builtin.debug:
         var: compose_status.stdout
 
     - name: Check container health
-      shell: |
+      ansible.builtin.shell: |
         cd "/opt/redmine-{{ inventory_hostname }}" && timeout 30 docker-compose logs redmine --tail=20
       register: container_logs
+      changed_when: false
       failed_when: false
 
     - name: Display container logs
-      debug:
+      ansible.builtin.debug:
         var: container_logs.stdout
 
     - name: Check for database connection issues
-      shell: |
+      ansible.builtin.shell: |
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose logs redmine | grep -i "postgres\|database\|db\|error\|failed\|timeout" | tail -10
       register: db_logs
+      changed_when: false
       failed_when: false
 
     - name: Display database connection logs
-      debug:
+      ansible.builtin.debug:
         var: db_logs.stdout
 
     - name: Test Redmine accessibility
-      uri:
+      ansible.builtin.uri:
         url: "http://{{ ansible_host }}:{{ container_redmine_port }}/"
-        return_content: yes
+        return_content: true
         status_code: 200, 302, 401, 500
         timeout: 30
       register: redmine_test
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: Display Redmine test result
-      debug:
+      ansible.builtin.debug:
         var: redmine_test.status
 
     - name: Show access information
-      debug:
+      ansible.builtin.debug:
         msg: |
           =========================================
           Redmine Deployment Summary - {{ inventory_hostname }}
