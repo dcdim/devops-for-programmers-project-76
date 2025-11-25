@@ -12,24 +12,24 @@
       ansible.builtin.debug:
         var: current_swap.stdout
 
+    - name: Check if swap file exists
+      ansible.builtin.stat:
+        path: /swapfile
+      register: swapfile_stat
+
     - name: Create 2GB swap file
       ansible.builtin.shell: |
         set -o pipefail
-        # Check if swap already exists
-        if [ -f /swapfile ]; then
-          echo "Swap file already exists"
-          sudo swapon --show
-        else
-          # Create swap file
-          sudo fallocate -l 2G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-          echo "Swap file created and activated"
-        fi
+        # Create swap file
+        sudo fallocate -l 2G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+        echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+        echo "Swap file created and activated"
       args:
         executable: /bin/bash
+      when: not swapfile_stat.stat.exists
 
     - name: Verify swap is active
       ansible.builtin.command: free -h
@@ -78,12 +78,17 @@
   hosts: webservers
   become: true
   tasks:
+    - name: Check if swap file exists
+      ansible.builtin.stat:
+        path: /swapfile
+      register: swapfile_exists
+
     - name: Remove swap file
       ansible.builtin.shell: |
         sudo swapoff /swapfile || true
         sudo rm -f /swapfile || true
         sudo sed -i '/\/swapfile/d' /etc/fstab || true
-      when: cleanup_swap | default(false)
+      when: cleanup_swap | default(false) and swapfile_exists.stat.exists
 
 - name: Install Docker using role
   hosts: all
@@ -120,7 +125,7 @@
     - name: Stop any Docker containers using the port
       ansible.builtin.shell: |
         set -o pipefail
-        docker ps --format "table {{.Names}}\t{{.Ports}}" | grep ":{{ container_redmine_port }}->" | awk '{print $1}' | xargs -r docker stop
+        docker ps --format "table {{ '{{.Names}}' }}\t{{ '{{.Ports}}' }}" | grep ":{{ container_redmine_port }}->" | awk '{print $1}' | xargs -r docker stop
       changed_when: false
       failed_when: false
 
@@ -244,11 +249,19 @@
         timeout: 30
         delay: 5
 
+    - name: Check if Redmine container is already running
+      ansible.builtin.shell: |
+        cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose ps --services --filter "status=running"
+      register: running_services_check
+      changed_when: false
+      failed_when: false
+
     - name: Deploy with docker compose
       ansible.builtin.shell: |
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose up -d
       args:
         executable: /bin/bash
+      when: "'redmine' not in running_services_check.stdout"
 
     - name: Wait a moment for container to initialize
       ansible.builtin.pause:
