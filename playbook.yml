@@ -20,7 +20,6 @@
     - name: Create 2GB swap file
       ansible.builtin.shell: |
         set -o pipefail
-        # Create swap file
         sudo fallocate -l 2G /swapfile
         sudo chmod 600 /swapfile
         sudo mkswap /swapfile
@@ -152,7 +151,6 @@
 
     - name: Force cleanup all Docker resources
       ansible.builtin.shell: |
-        # Принудительно останавливаем и удаляем все
         docker stop redmine-app-{{ inventory_hostname }} 2>/dev/null || true
         docker rm -f redmine-app-{{ inventory_hostname }} 2>/dev/null || true
         cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose down --remove-orphans 2>/dev/null || true
@@ -257,10 +255,11 @@
       failed_when: false
 
     - name: Deploy with docker compose
-      ansible.builtin.shell: |
-        cd "/opt/redmine-{{ inventory_hostname }}" && docker-compose up -d
-      args:
-        executable: /bin/bash
+      community.docker.docker_compose_v2:
+        project_src: "/opt/redmine-{{ inventory_hostname }}"
+        files:
+          - docker-compose.yml
+        state: present
       when: "'redmine' not in running_services_check.stdout"
 
     - name: Wait a moment for container to initialize
@@ -343,3 +342,4 @@
           Check container logs:
           cd /opt/redmine-{{ inventory_hostname }} && docker-compose logs redmine
           =========================================
+
