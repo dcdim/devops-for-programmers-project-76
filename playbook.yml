@@ -17,18 +17,18 @@
         path: /swapfile
       register: swapfile_stat
 
-    - name: Create 2GB swap file
-      ansible.builtin.shell: |
-        set -o pipefail
-        sudo fallocate -l 2G /swapfile
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
-        echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-        echo "Swap file created and activated"
-      args:
-        executable: /bin/bash
-      when: not swapfile_stat.stat.exists
+    # - name: Create 2GB swap file
+    #   ansible.builtin.shell: |
+    #     set -o pipefail
+    #     sudo fallocate -l 2G /swapfile
+    #     sudo chmod 600 /swapfile
+    #     sudo mkswap /swapfile
+    #     sudo swapon /swapfile
+    #     echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+    #     echo "Swap file created and activated"
+    #   args:
+    #     executable: /bin/bash
+    #   when: not swapfile_stat.stat.exists
 
     - name: Verify swap is active
       ansible.builtin.command: free -h
@@ -73,21 +73,21 @@
   roles:
     - role: datadog.datadog
 
-- name: Clean up swap after installation (optional)
-  hosts: webservers
-  become: true
-  tasks:
-    - name: Check if swap file exists
-      ansible.builtin.stat:
-        path: /swapfile
-      register: swapfile_exists
+# - name: Clean up swap after installation (optional)
+#   hosts: webservers
+#   become: true
+#   tasks:
+#     - name: Check if swap file exists
+#       ansible.builtin.stat:
+#         path: /swapfile
+#       register: swapfile_exists
 
-    - name: Remove swap file
-      ansible.builtin.shell: |
-        sudo swapoff /swapfile || true
-        sudo rm -f /swapfile || true
-        sudo sed -i '/\/swapfile/d' /etc/fstab || true
-      when: cleanup_swap | default(false) and swapfile_exists.stat.exists
+#     - name: Remove swap file
+#       ansible.builtin.shell: |
+#         sudo swapoff /swapfile || true
+#         sudo rm -f /swapfile || true
+#         sudo sed -i '/\/swapfile/d' /etc/fstab || true
+#       when: cleanup_swap | default(false) and swapfile_exists.stat.exists
 
 - name: Install Docker using role
   hosts: all
