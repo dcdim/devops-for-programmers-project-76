@@ -255,7 +255,7 @@
       failed_when: false
 
     - name: Deploy with docker compose
-      community.docker.docker_compose_v2:
+      community.docker.docker_compose:
         project_src: "/opt/redmine-{{ inventory_hostname }}"
         files:
           - docker-compose.yml
